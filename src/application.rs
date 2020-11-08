@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs;
-use std::fs::ReadDir;
-use std::io::{self, Error};
+use std::io::{self};
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
 
@@ -19,9 +18,9 @@ pub struct ApplicationEntry {
 
 impl ApplicationEntry {
     fn parse(k: &String, v: &HashMap<String, Option<String>>) -> ParseResult<Self> {
-        let title: String = v.get("title").unwrap().to_owned().unwrap();
-        let description: String = v.get("description").unwrap().to_owned().unwrap();
-        let ports = v.get("ports").unwrap().to_owned().unwrap()
+        let title: String = v.get("title").ok_or(ParseError::MissingTitle)?.to_owned().ok_or(ParseError::MissingTitle)?;
+        let description: String = v.get("description").ok_or(ParseError::MissingTitle)?.to_owned().ok_or(ParseError::MissingTitle)?;
+        let ports = v.get("ports").ok_or(ParseError::MissingTitle)?.to_owned().ok_or(ParseError::MissingTitle)?
             .split("|")
             .map(ApplicationEntry::parse_ports)
             .collect::<Vec<Vec<ParseResult<UfwPort>>>>()
@@ -61,8 +60,8 @@ impl ApplicationEntry {
             Ok(match p.contains(":") {
                 true => {
                     let ranges: Vec<&str> = p.split(":").collect();
-                    let start = ranges.get(0).ok_or(ParseError::InvalidPortRange("number before colon hasn't been specified".parse().unwrap()))?;
-                    let end = ranges.get(1).ok_or(ParseError::InvalidPortRange("number after colon hasn't been specified".parse().unwrap()))?;
+                    let start = ranges.get(0).ok_or(ParseError::InvalidPortRange("number before colon hasn't been specified".to_string()))?;
+                    let end = ranges.get(1).ok_or(ParseError::InvalidPortRange("number after colon hasn't been specified".to_string()))?;
 
                     UfwPort {
                         number: start.parse().map_err(|x: ParseIntError| ParseError::PortNotANumber(format!("Cannot parse first number in range: {}", x.to_string())))?,

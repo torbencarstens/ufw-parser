@@ -1,14 +1,14 @@
 use std::convert::TryFrom;
 use std::io;
-use std::io::Error;
+
 use std::net::IpAddr;
-use std::ops::Index;
+
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::str;
-use std::str::Utf8Error;
 
-use regex::{Captures, Match, Regex};
+
+use regex::{Regex};
 
 use crate::{ParseError, ParseResult};
 

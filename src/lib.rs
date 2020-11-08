@@ -5,9 +5,9 @@ extern crate serde_derive;
 extern crate thiserror;
 extern crate toml;
 
-use std::convert::TryInto;
-use std::num::ParseIntError;
-use std::path::{Path, PathBuf};
+
+
+
 
 use thiserror::Error;
 
@@ -15,7 +15,7 @@ pub use config::Config;
 pub use ufw::UfwCommand;
 
 pub use crate::application::{Application, ApplicationEntry, parse_applications};
-use crate::ufw::Protocol;
+
 
 mod config;
 mod ufw;
