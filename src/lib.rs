@@ -6,16 +6,12 @@ extern crate thiserror;
 extern crate toml;
 
 
-
-
-
 use thiserror::Error;
 
 pub use config::Config;
 pub use ufw::UfwCommand;
 
 pub use crate::application::{Application, ApplicationEntry, parse_applications};
-
 
 mod config;
 mod ufw;
@@ -41,6 +37,12 @@ pub enum ParseError {
     MissingTitle,
     #[error("")]
     MissingDescroption,
+    #[error("")]
+    InvalidLoggingLevel,
+    #[error("")]
+    WrongRuleDirection(String),
+    #[error("")]
+    WrongRuleType(String),
 }
 
 pub type ParseResult<V> = Result<V, ParseError>;

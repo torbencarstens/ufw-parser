@@ -95,7 +95,6 @@ impl Application {
         }
         let map = ini!(&inipath);
 
-
         let entries = map.iter().map(|(k, v)|
             ApplicationEntry::parse(k, v)
         ).collect::<Vec<ParseResult<ApplicationEntry>>>();

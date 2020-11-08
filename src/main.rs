@@ -10,6 +10,7 @@ fn main() -> ParseResult<()> {
     //     .for_each(|x|
     //         println!("{:#?}", x));
 
-    println!("{:#?}", ufw_auto_block::UfwCommand::new().version());
+    // println!("{:#?}", ufw_auto_block::UfwCommand::new().numbered_output());
+    ufw_auto_block::UfwCommand::new().numbered_output();
     Ok(())
 }
