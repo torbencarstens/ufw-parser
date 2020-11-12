@@ -17,19 +17,18 @@ pub struct ApplicationEntry {
 }
 
 impl ApplicationEntry {
-    fn parse(k: &String, v: &HashMap<String, Option<String>>) -> ParseResult<Self> {
-        let title: String = v.get("title").ok_or(ParseError::MissingTitle)?.to_owned().ok_or(ParseError::MissingTitle)?;
-        let description: String = v.get("description").ok_or(ParseError::MissingTitle)?.to_owned().ok_or(ParseError::MissingTitle)?;
-        let ports = v.get("ports").ok_or(ParseError::MissingTitle)?.to_owned().ok_or(ParseError::MissingTitle)?
+    fn parse(entry_key: &String, values: &HashMap<String, Option<String>>) -> ParseResult<Self> {
+        let title: String = values.get("title").ok_or(ParseError::MissingTitle)?.to_owned().ok_or(ParseError::MissingTitle)?;
+        let description: String = values.get("description").ok_or(ParseError::MissingDescription)?.to_owned().ok_or(ParseError::MissingDescription)?;
+
+        let ports = values.get("ports").ok_or(ParseError::MissingPorts)?.to_owned().ok_or(ParseError::MissingPorts)?
             .split("|")
             .map(ApplicationEntry::parse_ports)
-            .collect::<Vec<Vec<ParseResult<UfwPort>>>>()
-            .into_iter()
             .flatten()
             .collect::<Vec<ParseResult<UfwPort>>>();
 
         Ok(ApplicationEntry {
-            name: k.to_owned(),
+            name: entry_key.to_owned(),
             title,
             description,
             ports,
