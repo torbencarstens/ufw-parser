@@ -26,6 +26,9 @@ impl ApplicationEntry {
             .map(ApplicationEntry::parse_ports)
             .flatten()
             .collect::<Vec<ParseResult<UfwPort>>>();
+        if ports.is_empty() {
+            Err(ParseError::EmptyPortsSection)?
+        }
 
         Ok(ApplicationEntry {
             name: entry_key.to_owned(),
@@ -59,6 +62,7 @@ impl ApplicationEntry {
             Ok(match p.contains(":") {
                 true => {
                     let ranges: Vec<&str> = p.split(":").collect();
+                    // Check that both sides of the range have a value (x:y)
                     let start = ranges.get(0).ok_or(ParseError::InvalidPortRange("number before colon hasn't been specified".to_string()))?;
                     let end = ranges.get(1).ok_or(ParseError::InvalidPortRange("number after colon hasn't been specified".to_string()))?;
 
