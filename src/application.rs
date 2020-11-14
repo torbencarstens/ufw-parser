@@ -18,10 +18,19 @@ pub struct ApplicationEntry {
 
 impl ApplicationEntry {
     fn parse(entry_key: &String, values: &HashMap<String, Option<String>>) -> ParseResult<Self> {
-        let title: String = values.get("title").ok_or(ParseError::MissingTitle)?.to_owned().ok_or(ParseError::MissingTitle)?;
-        let description: String = values.get("description").ok_or(ParseError::MissingDescription)?.to_owned().ok_or(ParseError::MissingDescription)?;
+        let title: String = values
+            .get("title")
+            .ok_or(ParseError::MissingTitle)?.to_owned()
+            .ok_or(ParseError::MissingTitle)?;
+        let description: String = values
+            .get("description")
+            .ok_or(ParseError::MissingDescription)?.to_owned()
+            .ok_or(ParseError::MissingDescription)?;
 
-        let ports = values.get("ports").ok_or(ParseError::MissingPorts)?.to_owned().ok_or(ParseError::MissingPorts)?
+        let ports = values
+            .get("ports")
+            .ok_or(ParseError::MissingPorts)?.to_owned()
+            .ok_or(ParseError::MissingPorts)?
             .split("|")
             .map(ApplicationEntry::parse_ports)
             .flatten()
@@ -39,48 +48,64 @@ impl ApplicationEntry {
     }
 
     fn parse_ports(entry: &str) -> Vec<ParseResult<UfwPort>> {
-        let ports_protocol = entry.split("/").collect::<Vec<&str>>();
-        if ports_protocol.len() < 1 {
+        let mut ports_protocol = entry.split("/");
+        let s = ports_protocol.next();
+        if s.is_none() {
             return vec![Err(ParseError::PortsSectionEmpty)];
         }
 
-        let protocol_string = ports_protocol.get(1);
-        let protocols = match protocol_string {
+        let protocols = match ports_protocol.next() {
             None => {
                 vec![Ok(Protocol::TCP), Ok(Protocol::UDP)]
             }
             Some(val) => {
-                let s = *val;
-                let p: ParseResult<Protocol> = s.try_into();
+                let p: ParseResult<Protocol> = val.try_into();
 
                 vec![p]
             }
         };
 
-        let s = *ports_protocol.get(0).unwrap();
-        s.split(",").map(|p| {
-            Ok(match p.contains(":") {
-                true => {
-                    let ranges: Vec<&str> = p.split(":").collect();
-                    // Check that both sides of the range have a value (x:y)
-                    let start = ranges.get(0).ok_or(ParseError::InvalidPortRange("number before colon hasn't been specified".to_string()))?;
-                    let end = ranges.get(1).ok_or(ParseError::InvalidPortRange("number after colon hasn't been specified".to_string()))?;
+        s.unwrap()
+            .split(",")
+            .map(|p| {
+                Ok(match p.contains(":") {
+                    true => {
+                        let mut ranges = p.split(":");
+                        // Check that both sides of the range have a value (x:y)
+                        let start = ranges
+                            .next()
+                            .ok_or(ParseError::InvalidPortRange("number before colon hasn't been specified".to_string()))?;
+                        let end = ranges
+                            .next()
+                            .ok_or(ParseError::InvalidPortRange("number after colon hasn't been specified".to_string()))?;
 
-                    UfwPort {
-                        number: start.parse().map_err(|x: ParseIntError| ParseError::PortNotANumber(format!("Cannot parse first number in range: {}", x.to_string())))?,
-                        end_number: Some(end.parse().map_err(|x: ParseIntError| ParseError::PortNotANumber(format!("Cannot parse second number in range: {}", x.to_string())))?),
-                        protocols: protocols.to_vec(),
+                        UfwPort {
+                            number: start
+                                .parse()
+                                .map_err(|x: ParseIntError|
+                                    ParseError::PortNotANumber(format!("Cannot parse first number in range: {}", x.to_string()))
+                                )?,
+                            end_number: Some(end
+                                .parse()
+                                .map_err(|x: ParseIntError|
+                                    ParseError::PortNotANumber(format!("Cannot parse second number in range: {}", x.to_string()))
+                                )?),
+                            protocols: protocols.to_vec(),
+                        }
                     }
-                }
-                false => {
-                    UfwPort {
-                        number: p.parse().map_err(|x: ParseIntError| ParseError::PortNotANumber(x.to_string()))?,
-                        end_number: None,
-                        protocols: protocols.to_vec(),
+                    false => {
+                        UfwPort {
+                            number: p
+                                .parse()
+                                .map_err(|x: ParseIntError|
+                                    ParseError::PortNotANumber(x.to_string())
+                                )?,
+                            end_number: None,
+                            protocols: protocols.to_vec(),
+                        }
                     }
-                }
-            })
-        }).collect()
+                })
+            }).collect()
     }
 }
 
@@ -98,9 +123,11 @@ impl Application {
         }
         let map = ini!(&inipath);
 
-        let entries = map.iter().map(|(k, v)|
-            ApplicationEntry::parse(k, v)
-        ).collect::<Vec<ParseResult<ApplicationEntry>>>();
+        let entries = map
+            .iter()
+            .map(|(k, v)|
+                ApplicationEntry::parse(k, v)
+            ).collect();
 
         Ok(Application {
             filepath: path.into(),
