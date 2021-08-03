@@ -1,0 +1,21 @@
+index = { "[" ~ WHITE_SPACE* ~ ASCII_DIGIT+ ~ "]" }
+ipv4_address = { ASCII_DIGIT{1, 3} ~ "." ~ ASCII_DIGIT{1, 3} ~ "." ~ ASCII_DIGIT{1, 3} ~ "." ~ ASCII_DIGIT{1, 3}}
+hex = { (ASCII_DIGIT | "A" | "B" | "C" | "D" | "E" | "F" | "a" | "b" | "c" | "d" | "e" | "f")+ }
+ipv6_address = { (hex | ":") ~ (hex | ":")+ }
+cidr = { ASCII_DIGIT+ }
+address = { ipv4_address | "Anywhere" | ipv6_address }
+proto = { "tcp" | "udp" }
+protosuffix = { "/" ~ proto }
+port = { ASCII_DIGIT+ }
+v6 = @{ "v6" }
+portp = { port ~ "/" ~ proto }
+device = { ASCII_ALPHANUMERIC+ }
+ondevice = { "on" ~ WHITE_SPACE+ ~ device }
+portsuffpr = { "/" ~ portp }
+cidrprot = { cidr ~ "/" ~ proto }
+tofrom = { (address ~ ("/" ~ (cidrprot | cidr))? | portp | port) ~ (WHITE_SPACE* ~ (portp | port) | protosuffix | WHITE_SPACE) }
+modifier = { "ALLOW" | "DENY" }
+direction = { "IN" | "OUT" }
+action = { modifier ~ (WHITE_SPACE ~ direction)? }
+
+line = { SOI ~ index ~ WHITE_SPACE* ~ tofrom  ~ (WHITE_SPACE* ~ "(" ~ v6 ~ ")" )? ~ (WHITE_SPACE* ~ ondevice)? ~ WHITE_SPACE+ ~ action ~ WHITE_SPACE+ ~ tofrom ~ (WHITE_SPACE* ~ "(" ~ v6 ~ ")" )? ~ WHITE_SPACE* ~ EOI }

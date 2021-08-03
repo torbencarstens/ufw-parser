@@ -1,5 +1,12 @@
+#![feature(str_split_once)]
+#[macro_use]
+extern crate anyhow;
+extern crate bitstring;
 #[macro_use]
 extern crate ini;
+extern crate pest;
+#[macro_use]
+extern crate pest_derive;
 extern crate regex;
 extern crate serde_derive;
 extern crate thiserror;
@@ -9,6 +16,7 @@ extern crate toml;
 use thiserror::Error;
 
 pub use config::Config;
+pub use numbered::*;
 pub use ufw::UfwCommand;
 
 pub use crate::application::{Application, ApplicationEntry, parse_applications};
@@ -16,6 +24,7 @@ pub use crate::application::{Application, ApplicationEntry, parse_applications};
 mod config;
 mod ufw;
 mod application;
+mod numbered;
 
 #[derive(Clone, Debug, Error)]
 pub enum ParseError {
@@ -36,13 +45,19 @@ pub enum ParseError {
     #[error("")]
     MissingTitle,
     #[error("")]
-    MissingDescroption,
+    MissingDescription,
     #[error("")]
-    InvalidLoggingLevel,
+    MissingPorts,
+    #[error("")]
+    EmptyPortsSection,
+    #[error("")]
+    InvalidLoggingLevel(String),
     #[error("")]
     WrongRuleDirection(String),
     #[error("")]
     WrongRuleType(String),
+    #[error("")]
+    InvalidDefaults(String),
 }
 
 pub type ParseResult<V> = Result<V, ParseError>;

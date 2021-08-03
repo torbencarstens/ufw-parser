@@ -4,15 +4,16 @@ use std::net::IpAddr;
 use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::process::{Command, Output};
-use std::slice::SliceIndex;
 use std::str;
+use std::str::FromStr;
 
-use regex::{Captures, Match, Regex};
+use anyhow::{Context, Error, Result};
+use regex::{Captures, Regex};
 
 use crate::{ParseError, ParseResult};
-use crate::ufw::ReportFormats::LoggingRules;
+use crate::ParseError::{InvalidLoggingLevel, IOError};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Protocol {
     TCP,
     UDP,
@@ -21,6 +22,7 @@ pub enum Protocol {
     GRE,
     IPV6,
     IGMP,
+    ANY,
 }
 
 impl TryFrom<&str> for Protocol {
@@ -47,14 +49,55 @@ pub struct UfwAction {
     direction: RuleDirection,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Address {
+    addr: IpAddr,
+    cidr: u8,
+}
+
+impl From<IpAddr> for Address {
+    fn from(ip: IpAddr) -> Self {
+        Address {
+            addr: ip,
+            cidr: 32,
+        }
+    }
+}
+
+impl ToString for Address {
+    fn to_string(&self) -> String {
+        if self.cidr == 32 {
+            self.addr.to_string()
+        } else {
+            vec![self.addr.to_string(), self.cidr.to_string()].join("/")
+        }
+    }
+}
+
+impl TryFrom<&str> for Address {
+    type Error = anyhow::Error;
+
+    fn try_from(s: &str) -> Result<Self> {
+        Ok(match s.rfind('/') {
+            None => Address::from(IpAddr::from_str(s)?),
+            Some(pos) => {
+                Address {
+                    addr: IpAddr::from_str(&s[0..pos])?,
+                    cidr: u8::from_str(&s[pos + 1..])?,
+                }
+            }
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct RuleEntry {
     interface: Option<String>,
-    source_address: Option<IpAddr>,
-    destination_address: Option<IpAddr>,
-    source_port: Option<i16>,
-    destination_port: Option<i16>,
-    proto: Option<Protocol>,
+    source_address: Option<Address>,
+    destination_address: Option<Address>,
+    source_port: Option<u16>,
+    destination_port: Option<u16>,
+    proto: Protocol,
     ip_version: Option<IpVersion>,
     number: u16,
     action: UfwAction,
@@ -62,7 +105,7 @@ pub struct RuleEntry {
 
 impl RuleEntry {
     fn source_address_string(&self) -> String {
-        match self.source_address {
+        match &self.source_address {
             None => {
                 "any".into()
             }
@@ -70,6 +113,12 @@ impl RuleEntry {
                 val.to_string()
             }
         }
+    }
+}
+
+impl ToString for RuleEntry {
+    fn to_string(&self) -> String {
+        unimplemented!()
     }
 }
 
@@ -81,11 +130,31 @@ pub enum RuleDirection {
 }
 
 #[derive(Debug)]
+pub enum RuleDirectionDefaults {
+    INCOMING,
+    OUTGOING,
+    ROUTED,
+}
+
+#[derive(Debug)]
 pub enum RuleType {
     ALLOW,
     DENY,
     REJECT,
     LIMIT,
+}
+
+impl TryFrom<&str> for RuleDirectionDefaults {
+    type Error = ParseError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Ok(match value.to_ascii_lowercase().as_str() {
+            "incoming" => RuleDirectionDefaults::INCOMING,
+            "outgoing" => RuleDirectionDefaults::OUTGOING,
+            "routed" => RuleDirectionDefaults::ROUTED,
+            &_ => Err(ParseError::WrongRuleDirection(value.to_string()))?,
+        })
+    }
 }
 
 impl TryFrom<&str> for RuleType {
@@ -136,21 +205,26 @@ pub enum LoggingLevel {
     Full,
 }
 
-impl LoggingLevel {
-    fn from(onoff: &str, level: &str) -> ParseResult<LoggingLevel> {
+impl TryFrom<(&str, &str)> for LoggingLevel {
+    type Error = ParseError;
+
+    fn try_from(value: (&str, &str)) -> Result<Self, Self::Error> {
+        let (onoff, level) = value;
+
         match onoff {
             "on" => {
                 match level {
                     "low" => Ok(LoggingLevel::Low),
                     "medium" => Ok(LoggingLevel::Medium),
                     "high" => Ok(LoggingLevel::High),
-                    &_ => Err(ParseError::InvalidLoggingLevel),
+                    "full" => Ok(LoggingLevel::Full),
+                    &_ => Err(ParseError::InvalidLoggingLevel(level.to_string())),
                 }
             }
             "off" => {
                 Ok(LoggingLevel::Off)
             }
-            &_ => Err(ParseError::InvalidLoggingLevel),
+            &_ => Err(ParseError::InvalidLoggingLevel(onoff.to_string())),
         }
     }
 }
@@ -159,15 +233,16 @@ impl LoggingLevel {
 pub struct Ufw {
     enabled: bool,
     logging: LoggingLevel,
-    entries: Vec<RuleEntry>,
+    entries: Vec<(RuleEntry, bool)>,
 }
 
+// keep old rules until submitting
 impl Ufw {
     pub fn add_rule(&mut self, entry: RuleEntry) {
-        self.entries.push(entry)
+        self.entries.push((entry, true))
     }
 
-    pub fn delete_rule(&mut self, entry_index: u16) -> Option<RuleEntry> {
+    pub fn delete_rule(&mut self, entry_index: u16) -> Option<(RuleEntry, bool)> {
         if entry_index > self.entries.len() as u16 {
             None
         } else {
@@ -175,8 +250,17 @@ impl Ufw {
         }
     }
 
-    pub fn submit(self) -> io::Result<()> {
-        unimplemented!()
+    pub fn submit(self) -> io::Result<Vec<Output>> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (entry, commit_status))|
+                if !commit_status {
+                    Some(UfwCommand::new().exec(vec!["insert", &index.to_string(), &entry.to_string()]))
+                } else {
+                    None
+                })
+            .collect()
     }
 }
 
@@ -188,20 +272,29 @@ pub(crate) struct UfwPort {
 }
 
 pub struct UfwCommand {
-    executable: PathBuf
+    executable: PathBuf,
 }
 
 pub type UfwCommandOutput = Output;
 
+struct LineNumberRuleEntry {}
+
+struct LineNumberField {
+    name: String,
+    value: Vec<ParseResult<UfwPort>>, // TOOD correct type?
+}
+
 impl UfwCommand {
     pub fn new() -> UfwCommand {
-        UfwCommand::with_executable(PathBuf::from("/usr/bin/ufw"))
+        UfwCommand {
+            executable: PathBuf::from("/usr/bin/ufw")
+        }
     }
 
-    pub fn with_executable<P: Into<PathBuf>>(executable_path: P) -> UfwCommand {
-        UfwCommand {
-            executable: executable_path.into()
-        }
+    pub fn with_executable<P: Into<PathBuf>>(&mut self, executable_path: P) -> &mut UfwCommand {
+        self.executable = executable_path.into();
+
+        self
     }
 
     fn parse_action(arguments: Vec<&str>) -> ParseResult<UfwAction> {
@@ -214,86 +307,6 @@ impl UfwCommand {
             typ: RuleType::try_from(rule_type)?,
             direction: RuleDirection::try_from(rule_direction)?,
         })
-    }
-
-    pub fn numbered_output(&self) -> io::Result<Vec<RuleEntry>> {
-        let output = self.exec(vec!["status", "numbered"])?;
-        let regex = Regex::new(r"\[\s*(\d+)](.*)").unwrap();
-
-        if output.status.success() {
-            let stdout = UfwCommand::parse_stdout(output.stdout)?;
-            stdout
-                .lines()
-                .filter_map(|line| if regex.is_match(line) { Some(line) } else { None })
-                .map(|s|
-                    match regex
-                        .captures(s) {
-                        None => {
-                            Err(io::Error::new(io::ErrorKind::InvalidInput, format!("can't parse entry: {}", s)))
-                        }
-                        Some(value) => {
-                            let number = match value.get(1) {
-                                None => {
-                                    Err(io::Error::new(io::ErrorKind::InvalidInput, format!("can't parse entry: {}", s)))
-                                }
-                                Some(capture) => {
-                                    capture
-                                        .as_str()
-                                        .parse::<u16>()
-                                        .map_err(|e: ParseIntError| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))
-                                }
-                            }?;
-                            let fields = match value.get(2) {
-                                None => {
-                                    println!("no capture: {}", stdout)
-                                }
-                                Some(capture) => {
-                                    let text = capture.as_str().trim();
-                                    let fields: Vec<&str> = Regex::new(r"\s+")
-                                        .unwrap()
-                                        .split(text)
-                                        .map(|x|
-                                            x
-                                                .trim()
-                                                .split_whitespace()
-                                                .collect::<Vec<&str>>())
-                                        .flatten()
-                                        .collect();
-
-                                    let to: Vec<&&str> = fields
-                                        .iter()
-                                        .by_ref()
-                                        .take_while(|v| {
-                                            RuleType::try_from(**v).is_err()
-                                        }).collect();
-                                    let modifier = to.len();
-
-                                    let action = UfwCommand::parse_action(fields[modifier..modifier + 2].to_vec());
-                                    let from = &fields[modifier + 2..];
-
-                                    println!("==========================\n{:#?}", action);
-                                    println!("{:#?}", from);
-
-                                    action;
-                                }
-                            };
-
-                            Ok(RuleEntry {
-                                interface: None,
-                                source_address: None,
-                                destination_address: None,
-                                source_port: None,
-                                destination_port: None,
-                                proto: None,
-                                ip_version: None,
-                                number,
-                                action: UfwAction { typ: RuleType::ALLOW, direction: RuleDirection::IN },
-                            })
-                        }
-                    }).collect()
-        } else {
-            Err(io::Error::new(io::ErrorKind::Other, format!("ufw execution unsuccessful: {:?}", str::from_utf8(&output.stderr))))
-        }
     }
 
     fn parse_stdout(o: Vec<u8>) -> io::Result<String> {
@@ -332,12 +345,12 @@ impl UfwCommand {
                 }
             }
         } else {
-            Err(io::Error::new(io::ErrorKind::Other, format!("ufw execution unsuccessful: {:?}", str::from_utf8(&output.stderr))))
+            Err(io::Error::new(io::ErrorKind::Other, format!("ufw execution unsuccessful: {:?}", str::from_utf8(&output.stderr))))?
         }
     }
 
-    pub fn info(&self) -> io::Result<(bool, LoggingLevel)> {
-        let output = self.exec(vec!["version"])?;
+    pub fn info(&self) -> ParseResult<(bool, LoggingLevel)> {
+        let output = self.exec(vec!["status", "verbose"]).map_err(|e| IOError(e.to_string()))?;
 
         if output.status.success() {
             let text = match str::from_utf8(&*output.stdout) {
@@ -345,7 +358,7 @@ impl UfwCommand {
                     Ok(val)
                 }
                 Err(err) => {
-                    Err(io::Error::new(io::ErrorKind::Other, err.to_string()))
+                    Err(IOError(err.to_string()))
                 }
             }?;
 
@@ -354,43 +367,95 @@ impl UfwCommand {
                 .captures(text) {
                 None => {
                     let error_message = format!("Couldn't find a valid ufw version in {}", text);
-                    Err(io::Error::new(io::ErrorKind::InvalidInput, error_message))
+                    Err(IOError(error_message))
                 }
                 Some(captures) => {
                     match captures.get(1) {
                         None => {
                             let error_message = format!("Couldn't find a valid logging level in: {}", text);
-                            Err(io::Error::new(io::ErrorKind::InvalidInput, error_message))
+                            Err(IOError(error_message))
                         }
                         Some(capture) => {
                             Ok(capture.as_str().to_string())
                         }
-                    }.map_err(|_| io::Error::new(io::ErrorKind::Other, format!("couldn't find enabled status in: {:?}", str::from_utf8(&output.stderr))))
+                    }
                 }
             }? == "active";
-            let logging = match Regex::new(r"Logging:\s*(on|off)\s*(:?\((\w+)\))?")
+            let logging_level = match Regex::new(r"Logging:\s*(on|off)\s*(:?\((\w+)\))?")
                 .unwrap()
                 .captures(text) {
                 None => {
                     let error_message = format!("Couldn't find a valid logging level {}", text);
-                    Err(io::Error::new(io::ErrorKind::InvalidInput, error_message))
+                    Err(InvalidLoggingLevel(text.to_string()))
                 }
                 Some(captures) => {
-                    match captures.get(1) {
-                        None => {
-                            let error_message = format!("Couldn't find a valid logging level in: {}", text);
-                            Err(io::Error::new(io::ErrorKind::InvalidInput, error_message))
-                        }
-                        Some(capture) => {
-                            Ok(capture.as_str().to_string())
-                        }
-                    }.map_err(|_| io::Error::new(io::ErrorKind::Other, format!("couldn't find enabled status in: {:?}", str::from_utf8(&output.stderr))))
+                    let (state, level) = (captures.get(1), captures.get(2));
+                    if state.is_some() && level.is_some() {
+                        let level = level.unwrap().as_str().replace("(", "").replace(")", "");
+                        LoggingLevel::try_from((state.unwrap().as_str(), level.as_str()))
+                    } else {
+                        let message = format!("Invalid logging level ({}) found.\
+                            Valid logging levels are: `low`, `medium`, `high`.\
+                            \nBeware that ufw has no checks on what you're setting the value to and allows anything.",
+                                              text.to_string());
+                        Err(InvalidLoggingLevel(message))
+                    }
                 }
             }?;
 
-            Ok((enabled, LoggingLevel::Full))
+            Ok((enabled, logging_level))
         } else {
-            Err(io::Error::new(io::ErrorKind::Other, format!("ufw execution unsuccessful: {:?}", str::from_utf8(&output.stderr))))
+            Err(IOError(format!("ufw execution unsuccessful: {:?}", str::from_utf8(&output.stderr))))
+        }
+    }
+
+    pub fn defaults(&self) -> ParseResult<Vec<(ParseResult<RuleDirectionDefaults>, ParseResult<RuleType>)>> {
+        let output = self.exec(vec!["status", "verbose"]).map_err(|e| IOError(e.to_string()))?;
+        if output.status.success() {
+            let text = match str::from_utf8(&*output.stdout) {
+                Ok(val) => {
+                    Ok(val)
+                }
+                Err(err) => {
+                    Err(IOError(err.to_string()))
+                }
+            }?;
+
+            let defaults_regex = Regex::new(r"^Default:\s*.+").unwrap();
+            let single_default_regex = Regex::new(r"(\w+)\s+\((\w+)\)").unwrap();
+            Ok(text
+                .split("\n")
+                .filter(|text| defaults_regex.is_match(text))
+                .map(|text|
+                    text
+                        .split(": ")
+                        .last()
+                        // this is impossible since we match against the defaults_regex beforehand which assures that something is behind the colon
+                        .unwrap_or("")
+                        .split(", ")
+                        .map(|x| {
+                            let default = single_default_regex.captures(x).unwrap();
+
+                            let rule_type = default.get(1);
+                            let rule_direction = default.get(2);
+
+                            if rule_direction.is_some() & &rule_type.is_some() {
+                                let rule_direction: String = rule_direction.unwrap().as_str().into();
+                                let rule_type: String = rule_type.unwrap().as_str().into();
+
+                                let direction = RuleDirectionDefaults::try_from(&*rule_direction);
+                                let rtype = RuleType::try_from(&*rule_type);
+
+                                (direction, rtype)
+                            } else {
+                                (Err(ParseError::WrongRuleDirection(text.to_string())), Err(ParseError::WrongRuleDirection(text.to_string())))
+                            }
+                        })
+                        .collect::<Vec<(ParseResult<RuleDirectionDefaults>, ParseResult<RuleType>)>>()
+                ).flatten()
+                .collect())
+        } else {
+            Err(ParseError::InvalidDefaults(format!("{:?}\n\n{:?}", str::from_utf8(&*output.stdout), str::from_utf8(&*output.stderr))))
         }
     }
 
