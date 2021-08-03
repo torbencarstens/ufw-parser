@@ -6,7 +6,7 @@ use serde_derive::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    block_after_times: i32
+    block_after_times: i32,
 }
 
 impl Config {
